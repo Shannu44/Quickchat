@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f4f4f4;
+        }
+        .password-field {
+        display: none; /* Initially hide password fields */
+        }
+
+        .password-text {
+            display: inline; /* Initially show the text password */
+        }
+
+        .show-passwords .password-field {
+            display: inline; /* When the 'show-passwords' class is added, show the password field */
+        }
+
+        .show-passwords .password-text {
+            display: none; /* When the 'show-passwords' class is added, hide the text password */
+        }
+    </style>
+</head>
+<body>
+    <h1>Admin Panel</h1>
+    
+    <!-- Single Show Password Button -->
+    <button id="toggle-passwords" onclick="toggleAllPasswords()">Show Passwords</button>
+
+    <table>
+        <thead>
+            <tr>
+                <th>User ID</th>
+                <th>Username</th>
+                <th>Password</th>
+            </tr>
+        </thead>
+        <tbody>
+            <h1>Welcome, Admin!</h1>
+    
+            <a href="{{ url_for('admin_logout') }}">
+                <button>Logout</button>
+            </a>
+            {% for user in users %}
+            <tr>
+                <td>{{ user[0] }}</td>
+                <td>{{ user[1] }}</td>
+                <td>
+                    <span class="password-field">{{ user[2] }}</span> <!-- Password is hidden initially -->
+                    <span class="password-text" style="display:none;">{{ user[2] }}</span> <!-- Text for password -->
+                </td>
+                <td>
+                    <form action="{{ url_for('delete_user', user_id=user['id']) }}" method="POST" onsubmit="return confirm('Are you sure you want to delete this user?');">
+                        <button type="submit" class="btn btn-danger">Delete</button>
+                    </form>                                 
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>        
+
+    <script>
+function toggleAllPasswords() {
+    const passwordFields = document.querySelectorAll('.password-field');
+    const passwordTexts = document.querySelectorAll('.password-text');
+    const button = document.getElementById('toggle-passwords');
+
+    // Check if the first password field is currently hidden
+    let isHidden = passwordFields[0].style.display === "none";
+
+    // Toggle visibility of password fields
+    passwordFields.forEach(field => {
+        field.style.display = isHidden ? "inline" : "none"; // Toggle visibility
+    });
+
+    // Show or hide the text passwords
+    passwordTexts.forEach(text => {
+        text.style.display = isHidden ? "none" : "inline"; // Show the text passwords
+    });
+
+    // Toggle button text based on the state
+    if (isHidden) {
+        button.innerText = "Hide Passwords";
+    } else {
+        button.innerText = "Show Passwords";
+    }
+}
+
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+import sys
+
+# add your project directory to the sys.path
+project_home = '/home/shannu04/mysite'
+if project_home not in sys.path:
+    sys.path = [project_home] + sys.path
+
+# import flask app but need to call it "application" for WSGI to work
+from app import app as application  # noqa

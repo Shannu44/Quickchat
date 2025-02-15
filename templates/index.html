@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Application</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}" defer></script>
+</head>
+<body>
+    <div class="app">
+        <div class="sidebar">
+            <h3>Registered Users</h3>
+            <input type="text" id="user-search" placeholder="Search users..." oninput="searchUsers()" />
+            <ul id="user-list">
+                {% for user in users %}
+                    <li onclick="startChat('{{ user[0] }}', '{{ user[1] }}')">{{ user[1] }}</li>
+                {% endfor %}
+            </ul>
+            <h3>Recent Chats</h3>
+            <input type="text" id="recent-user-search" placeholder="Search users..." oninput="searchRecentUsers()" />
+            <ul id="recent-chats">
+                
+            </ul>
+        </div>
+        <div class="chat-area">
+            <div class="chat-header">
+                <h2 id="chat-with">Select a user to chat</h2>
+                <div class="chat-menu">
+                <button class="menu-toggle" id="three-dots">⋮</button>
+                    <div class="menu-dropdown" id="menuDropdown">
+                        <a id="clear-chat-button" onclick="clearChat()">Clear Chat</a>
+                        </div>
+                </div> 
+            </div>   
+            <div class="conversation-area" id="conversation-area">
+                <div class="chatArea">
+                <!-- Messages will be displayed here -->
+            </div>
+            </div>
+            <div id="selection-toolbar" style="display: none;">
+                <button id="delete-selected">Delete</button>
+              </div>
+            <div class="chat-area-footer">
+                <input type="text" id="TxtMessage" placeholder="Type a message..." />
+                <button id="startVoice">Start Voice</button>
+                <div id="listeningAnimation"></div>
+                <button id="send-button">Send</button>
+            </div>
+        </div>
+        <div class="profile-area" id="profile-area">
+            <button id="logout-button" onclick="logout()">Logout</button>
+            <h3>User Profile</h3>
+            <p id="profile-details">Select a user to see profile details.</p>
+        </div>
+    </div>
+<script>
+
+/////////////////////////////////////////////////////////////////////////
+const socket = io(); // Initialize Socket.IO
+let currentRecipientId = {{ default_recipient_id if default_recipient_id else 'null' }};
+let currentUserId = {{ current_user.id }};
+
+window.onload = function () {
+    let lastChatUserId = {{ last_chat_user_id if last_chat_user_id else 'null' }};
+    if (lastChatUserId) {
+        startChat(lastChatUserId, 'Recent User'); // Start the chat with the last user
+    }
+};
+
+function logout() {
+    fetch('/logout', { method: 'POST' })
+        .then(() => window.location.href = '/login')
+        .catch(error => console.error("Logout failed:", error));
+}
+
+async function fetchMessages(recipientId) {
+    const response = await fetch(`/get_messages/${recipientId}`);
+    const messages = await response.json();
+    const conversationArea = document.getElementById('conversation-area');
+    conversationArea.innerHTML = ''; // Clear previous messages
+    
+    messages.forEach(([sender, message, timestamp]) => {
+        addMessageToConversation(sender, message, sender === currentUserId, timestamp);
+    });
+    conversationArea.scrollTop = conversationArea.scrollHeight; // Scroll to the bottom
+}
+
+document.getElementById('send-button').addEventListener('click', () => {
+    const messageInput = document.getElementById('TxtMessage');
+    const message = messageInput.value;
+
+    if (message && currentRecipientId) {
+        const timestamp = new Date().toISOString(); // Sends timestamp in UTC format
+        
+        socket.emit('send_message', {
+            sender_id: currentUserId,
+            recipient_id: currentRecipientId,
+            message: message,
+            timestamp: timestamp // Include timestamp in the emitted message
+        });
+
+        addMessageToConversation('You', message, true, timestamp); // true for sender
+        messageInput.value = ''; // Clear the input field
+    }
+});
+
+// Function to format the timestamp
+function formatTimestamp(utcString) {
+    const date = new Date(utcString);
+    return date.toLocaleString(); // Converts to the local time format
+}
+
+
+function addMessageToConversation(username, message, isSender, timestamp) {
+    const conversationArea = document.getElementById('conversation-area');
+    const msgDiv = document.createElement('div');
+    msgDiv.className = isSender ? 'msg sender' : 'msg receiver';
+    
+    const formattedTimestamp = formatTimestamp(timestamp);
+    msgDiv.innerHTML = `
+        <div class="msg-detail">
+            <div class="msg-content">
+                <span class="msg-message">${message}</span>
+                <span class="msg-time">${formattedTimestamp}</span>
+            </div>
+        </div>
+    `;
+    
+    conversationArea.appendChild(msgDiv);
+    conversationArea.scrollTop = conversationArea.scrollHeight; // Scroll to the bottom
+}
+
+
+socket.on('receive_message', (data) => {
+    if (data.recipient_id === currentRecipientId || data.sender_id === currentRecipientId) {
+        const isSender = data.sender_id === currentUserId; // Check if the current user is the sender
+        addMessageToConversation(data.sender_id === currentUserId ? 'You' : data.sender_id, data.message, !isSender, data.timestamp);
+
+        // Create newMessage object with required data
+        const newMessage = {
+            user_id: data.sender_id === currentUserId ? data.recipient_id : data.sender_id, // Assuming recipient_id is the other user's ID
+            username: data.sender_id === currentUserId ? data.username : data.sender_username, // Assuming you have the username
+            timestamp: data.timestamp
+        };
+
+        // Call the function to update recent chats with new message details
+        updateRecentChats(newMessage);
+    }
+});
+
+//////////////////////
+
+document.addEventListener("DOMContentLoaded", function() {
+    document.querySelectorAll(".chat-item").forEach(item => {
+        item.addEventListener("click", function(event) {
+            event.preventDefault();  // Prevent link behavior
+            let userId = this.getAttribute("data-user-id");
+            let username = this.innerText; // Get the username from the link text
+            startChat(userId, username); // Start the chat with the clicked user
+        });
+    });
+    const threeDotsButton = document.getElementById("three-dots");
+    const menuDropdown = document.getElementById("menuDropdown");
+
+    // Toggle dropdown visibility
+    threeDotsButton.addEventListener("click", function(event) {
+        event.stopPropagation(); // Prevent event from bubbling up to the window
+        menuDropdown.style.display = menuDropdown.style.display === "block" ? "none" : "block";
+    });
+
+    // Close dropdown when clicking outside
+    window.addEventListener("click", function() {
+        menuDropdown.style.display = "none";
+    });
+});
+
+
+function openChat(userId, username) {
+    // Load messages for the selected user
+    fetchMessages(userId);
+
+    // Optionally update the UI to reflect the currently opened chat
+    document.getElementById('current-chat-user').innerText = username;
+
+    // Update the session variable for the last opened chat
+    fetch(`/update_last_chat/${userId}`, {
+        method: 'POST',
+        credentials: 'same-origin' // Ensure cookies are sent with the request
+    });
+}
+
+///////////////////////////////////////////////TIME////////////////////////////
+function getLocalTimestamp() {
+    const now = new Date();
+    return now.getFullYear() + "-" +
+           String(now.getMonth() + 1).padStart(2, '0') + "-" +
+           String(now.getDate()).padStart(2, '0') + " " +
+           String(now.getHours()).padStart(2, '0') + ":" +
+           String(now.getMinutes()).padStart(2, '0') + ":" +
+           String(now.getSeconds()).padStart(2, '0');
+}
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Update the sendMessage function to use the current UTC timestamp
+function sendMessage() {
+    const messageInput = document.getElementById('TxtMessage');
+    const message = messageInput.value.trim();
+    if (!message) return;
+
+    const recipientId = document.getElementById('recipient-id').value;
+
+    // Use ISO format for the timestamp
+    const timestamp = new Date().toISOString();
+    console.log("Timestamp Sent to Backend:", timestamp);  // Debugging log
+
+    const data = {
+        sender_id: currentUserId,
+        recipient_id: recipientId,
+        message: message,
+        timestamp: timestamp
+    };
+
+    fetch('/send_message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    }).then(response => {
+        if (response.ok) {
+            console.log("Message sent successfully!");
+            messageInput.value = ''; // Clear input
+        }
+    }).catch(error => console.error("Error sending message:", error));
+}
+// Clear the chat window
+
+function clearChat() {
+            const conversationArea = document.getElementById('conversation-area');
+            conversationArea.innerHTML = ''; // Clear the messages in the chat area
+            alert("Chat with " + document.getElementById('chat-with').innerText + " has been cleared.");
+        }
+
+async function clearChat() {
+const conversationArea = document.getElementById('conversation-area');
+const chatWith = document.getElementById('chat-with').innerText; // Get the user you're chatting with
+
+const confirmation = confirm("Are you sure you want to clear the chat? Once deleted, it cannot be recovered.");
+
+if (confirmation) {
+conversationArea.innerHTML = '';
+// Call the API to clear the chat in db
+await fetch(`/clear_chat/${currentRecipientId}`, { method: 'POST' });
+
+alert("Chat with " + chatWith + " has been cleared.");
+}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Add click listeners to all recent chats
+document.querySelectorAll('.recent-chat').forEach(item => {
+    item.addEventListener('click', function(event) {
+        event.preventDefault(); // Prevent default link behavior
+        let recipientId = this.getAttribute('data-recipient-id');
+        let username = this.innerText; // Get the username from the clicked link
+        startChat(recipientId, username); // Start the chat with the clicked user
+    });
+});
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+function startChat(recipientId, username) {
+        currentRecipientId = recipientId;
+        document.getElementById('chat-with').innerText = `Chatting with ${username}`;
+        document.getElementById('profile-details').innerText = `Profile details for ${username}`;
+        fetchMessages(recipientId);
+
+          // Fetch the recipient's online status
+    fetch(`/user_status/${recipientId}`)
+        .then(response => response.json())
+        .then(data => {
+            const statusElement = document.getElementById('user-online-status');
+            if (data.online) {
+                statusElement.innerText = "🟢 Online";
+                statusElement.style.color = "green";
+            } else {
+                statusElement.innerText = "🔴 Offline";
+                statusElement.style.color = "red";
+            }
+        })
+        .catch(error => console.error('Error fetching user status:', error));
+}
+
+
+
+    async function fetchMessages(recipientId) {
+    const response = await fetch(`/get_messages/${recipientId}`);
+    const messages = await response.json();
+    const conversationArea = document.getElementById('conversation-area');
+    conversationArea.innerHTML = ''; // Clear previous messages
+
+    messages.forEach(msg => {
+        const isSender = msg[0] === '{{ current_user.username }}'; // Check if the message is from the current user
+        addMessageToConversation(msg[0], msg[1], isSender, msg[2]); // msg[2] should be the timestamp
+    });
+    conversationArea.scrollTop = conversationArea.scrollHeight; // Scroll to the bottom
+}
+
+
+async function fetchRecentChats() {
+            const response = await fetch('/get_recent_chats');
+            const recentChats = await response.json();
+            const recentChatsArea = document.getElementById('recent-chats');
+            recentChatsArea.innerHTML = ''; // Clear previous recent chats
+            
+            let mostRecentUserId = null;
+
+            recentChats.forEach(([userId, username, lastMessageTime]) => {
+                const chatItem = document.createElement('li');
+                chatItem.innerText = username;
+                chatItem.onclick = () => startChat(userId, username); // Start chat on click
+                recentChatsArea.appendChild(chatItem);
+                
+                // Get the most recent user ID for automatic selection
+                if (!mostRecentUserId) {
+                    mostRecentUserId = userId; // Store the first user as most recent
+                }
+            });
+
+            // If there is a recent user, auto-start the chat
+            if (mostRecentUserId) {
+                startChat(mostRecentUserId, recentChats[0][1]); // Start chat with the most recent user
+            }
+        }
+window.onload = function() {
+            fetchRecentChats();
+        }
+////////////////////////////////////////////////////////////////////
+function updateRecentChats(newChat) {
+    const chatList = document.getElementById('recent-chats-list');
+    const newChatItem = document.createElement('li');
+    newChatItem.className = 'chat-item';
+    newChatItem.setAttribute('data-user-id', newChat.user_id);
+    newChatItem.innerText = `${newChat.username} - ${newChat.timestamp}`;
+
+    // Insert at the top of the list
+    chatList.insertBefore(newChatItem, chatList.firstChild);
+}
+
+// Example of how to call this function when a new message is received
+// Assume newMessage is an object containing user_id, username, and timestamp
+updateRecentChats(newMessage);
+//////////////////////////////////////////////////////////////////////////////////////////SEARCH///////////////////////////
+function searchUsers() {
+    const searchQuery = document.getElementById('user-search').value.toLowerCase(); // Get the search input
+    const userList = document.getElementById('user-list');
+    const users = userList.getElementsByTagName('li'); // Get all user list items
+
+    // Loop through all user list items and filter based on the input
+    Array.from(users).forEach(user => {
+        const username = user.innerText.toLowerCase(); // Get the username of the current list item
+        if (username.includes(searchQuery)) {
+            user.style.display = ''; // Show the user if the username matches the search query
+        } else {
+            user.style.display = 'none'; // Hide the user if it doesn't match
+        }
+    });
+}
+
+function searchRecentUsers() {
+    let input = document.getElementById("recent-user-search").value.toLowerCase();
+    let chatList = document.getElementById("recent-chats");
+    let users = chatList.getElementsByTagName("li");
+
+    for (let user of users) {
+        let username = user.textContent || user.innerText;
+        if (username.toLowerCase().includes(input)) {
+            user.style.display = ""; // Show the user if it matches
+        } else {
+            user.style.display = "none"; // Hide the user if it doesn't match
+        }
+    }
+}
+
+////////////////////////////////////////CLEAR CHAT//////////////////////////////////////
+document.getElementById('clear-chat').addEventListener('click', function() {
+    // Assuming you have access to the current recipient's ID (you can store it when opening a conversation)
+    let recipientId = 123; // Replace with dynamic recipient ID
+
+    // Send a POST request to clear the chat
+    fetch('/clear_chat', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ recipient_id: recipientId })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Chat cleared successfully');
+            // Optionally, clear the chat UI or refresh the page to reflect the changes
+        } else {
+            alert('Failed to clear chat');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred while clearing chat');
+    });
+});
+
+
+
+socket.on('chat_cleared', function(data) {
+    // Update the chat UI, possibly clearing messages or showing a notification
+    alert('Chat has been cleared!');
+    // You may also reset the chat box here if needed
+});
+
+
+
+///////////////////////////////////////////////////////TYPING>>>>>>>>>>>>>>>>>>>>>>>>>////////////////////////
+
+document.getElementById('TxtMessage').addEventListener("keypress", function(event) {
+    if (event.key === "Enter") {
+        document.getElementById("send-button").click();
+    }
+});
+///////////////////////////////////USERS SORT/////////////////////////////
+// Assuming 'users' is an array of user objects with a 'username' field
+function sortUsers(users) {
+    return users.sort((a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+}
+
+// Function to display users in the UI
+function displayUsers(users) {
+    const userList = document.getElementById('user-list'); // Ensure this matches your HTML ID
+    userList.innerHTML = ''; // Clear existing list
+
+    users.forEach(user => {
+        const listItem = document.createElement('li');
+        listItem.textContent = user.username;
+        userList.appendChild(listItem);
+    });
+}
+fetch('/api/get_users')  // Change this to your actual API route
+    .then(response => response.json())
+    .then(users => {
+        const sortedUsers = sortUsers(users);
+        displayUsers(sortedUsers);
+    })
+    .catch(error => console.error('Error fetching users:', error));
+//////////////////////////////////////////////////////////////////////////////////////Online status/////////////////////////////
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    </script>
+</body>
+</html>
