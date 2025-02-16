@@ -27,6 +27,7 @@
         <div class="chat-area">
             <div class="chat-header">
                 <h2 id="chat-with">Select a user to chat</h2>
+                <p id="user-online-status">status.</p>
                 <div class="chat-menu">
                 <button class="menu-toggle" id="three-dots">⋮</button>
                     <div class="menu-dropdown" id="menuDropdown">
@@ -67,6 +68,9 @@ window.onload = function () {
     if (lastChatUserId) {
         startChat(lastChatUserId, 'Recent User'); // Start the chat with the last user
     }
+     // Start fetching recent chats and users every second
+     setInterval(fetchRecentChats, 1000);
+    setInterval(fetchOnlineUsers, 1000); 
 };
 
 function logout() {
@@ -80,7 +84,7 @@ async function fetchMessages(recipientId) {
     const messages = await response.json();
     const conversationArea = document.getElementById('conversation-area');
     conversationArea.innerHTML = ''; // Clear previous messages
-    
+
     messages.forEach(([sender, message, timestamp]) => {
         addMessageToConversation(sender, message, sender === currentUserId, timestamp);
     });
@@ -93,7 +97,7 @@ document.getElementById('send-button').addEventListener('click', () => {
 
     if (message && currentRecipientId) {
         const timestamp = new Date().toISOString(); // Sends timestamp in UTC format
-        
+
         socket.emit('send_message', {
             sender_id: currentUserId,
             recipient_id: currentRecipientId,
@@ -274,20 +278,24 @@ function startChat(recipientId, username) {
         document.getElementById('profile-details').innerText = `Profile details for ${username}`;
         fetchMessages(recipientId);
 
-          // Fetch the recipient's online status
+       // Fetch the recipient's online status
     fetch(`/user_status/${recipientId}`)
         .then(response => response.json())
         .then(data => {
-            const statusElement = document.getElementById('user-online-status');
-            if (data.online) {
-                statusElement.innerText = "🟢 Online";
-                statusElement.style.color = "green";
-            } else {
-                statusElement.innerText = "🔴 Offline";
-                statusElement.style.color = "red";
-            }
+            updateStatusElement(recipientId, data.online);
         })
         .catch(error => console.error('Error fetching user status:', error));
+}
+
+function updateStatusElement(userId, isOnline) {
+    const statusElement = document.getElementById('user-online-status');
+    if (isOnline) {
+        statusElement.innerText = "🟢 Online";
+        statusElement.style.color = "green";
+    } else {
+        statusElement.innerText = "🔴 Offline";
+        statusElement.style.color = "red";
+    }
 }
 
 
@@ -451,6 +459,19 @@ fetch('/api/get_users')  // Change this to your actual API route
     })
     .catch(error => console.error('Error fetching users:', error));
 //////////////////////////////////////////////////////////////////////////////////////Online status/////////////////////////////
+
+
+socket.on("user_online", (data) => {
+    if (data.user_id === currentRecipientId) {
+        updateStatusElement(data.user_id, true);
+    }
+});
+
+socket.on("user_offline", (data) => {
+    if (data.user_id === currentRecipientId) {
+        updateStatusElement(data.user_id, false);
+    }
+});
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     </script>

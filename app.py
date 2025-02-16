@@ -4,7 +4,7 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from datetime import datetime
 from datetime import timedelta
 from flask import Flask, request, jsonify, session
-import pytz 
+import pytz
 import sqlite3
 
 app = Flask(__name__, template_folder='templates')
@@ -22,17 +22,17 @@ def init_db():
     current_time = datetime.utcnow().isoformat()  # Save in UTC ISO 8601 format
 
 
-        # Users table 
-    cursor.execute(''' 
+        # Users table
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
+            password TEXT NOT NULL
         )
     ''')
 
     # Admins table
-    cursor.execute(''' 
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS admins (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
@@ -52,7 +52,7 @@ def init_db():
     ''')
 
     # Recent chats table
-    cursor.execute(''' 
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS recent_chats (
             sender_id INTEGER,
             user_id INTEGER,
@@ -74,9 +74,6 @@ class User(UserMixin):
         self.password = password
         self.is_admin = is_admin
 
-
-app.permanent_session_lifetime = timedelta(days=1)  # Keep session for 1 day
-
 @login_manager.user_loader
 def load_user(user_id):
     conn = sqlite3.connect('chat.db')
@@ -95,7 +92,7 @@ def register():
     conn = sqlite3.connect('chat.db')
     cursor = conn.cursor()
     try:
-        cursor.execute('INSERT INTO users (username, password, is_admin) VALUES (?, ?, ?)', (username, password, 0)) 
+        cursor.execute('INSERT INTO users (username, password, is_admin) VALUES (?, ?, ?)', (username, password, 0))
         conn.commit()
     except sqlite3.IntegrityError:
         return "Username already exists.", 400
@@ -159,7 +156,7 @@ def admin_panel():
         return redirect(url_for('admin'))
 
     conn = sqlite3.connect("chat.db")
-    conn.row_factory = sqlite3.Row 
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute("SELECT id, username, password FROM users")
     users = cursor.fetchall()
@@ -186,13 +183,13 @@ def delete_user(user_id):
 @login_required
 def update_last_chat(user_id):
     session['last_chat_user_id'] = user_id
-    return '', 204 
+    return '', 204
 
 @app.route('/admin_logout')
 def admin_logout():
-    session.pop('admin', None) 
+    session.pop('admin', None)
     flash("Logged out successfully.", "success")
-    return redirect(url_for('login'))  
+    return redirect(url_for('login'))
 
 
 @app.route('/logout')
@@ -206,9 +203,9 @@ def logout():
 def index():
     conn = sqlite3.connect('chat.db')
     cursor = conn.cursor()
-    # Fetch recent chats for the logged-in user 
+    # Fetch recent chats for the logged-in user
     cursor.execute('''
-        SELECT DISTINCT u.id, u.username, rc.timestamp_local 
+        SELECT DISTINCT u.id, u.username, rc.timestamp_local
         FROM recent_chats rc
         JOIN users u ON rc.user_id = u.id
         WHERE rc.sender_id = ?
@@ -244,7 +241,7 @@ def index():
 def get_recent_chats():
     conn = sqlite3.connect('chat.db')
     cursor = conn.cursor()
-    
+
     cursor.execute('''
         SELECT u.id, u.username, MAX(m.timestamp_utc) as last_message_time
         FROM messages m
@@ -271,15 +268,15 @@ def handle_chat_cleared(data):
 def handle_send_message(data):
     conn = sqlite3.connect('chat.db')
     cursor = conn.cursor()
-    
+
     timestamp = data.get('timestamp', datetime.utcnow().isoformat())
-    
+
     cursor.execute(
-        '''INSERT INTO messages (sender_id, recipient_id, message, timestamp_utc) 
+        '''INSERT INTO messages (sender_id, recipient_id, message, timestamp_utc)
            VALUES (?, ?, ?, ?)''',
         (data['sender_id'], data['recipient_id'], data['message'], timestamp)
     )
-    
+
     conn.commit()
     conn.close()
 
@@ -293,10 +290,10 @@ def get_messages(recipient_id):
     conn = sqlite3.connect('chat.db')
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT u.username, m.message, m.timestamp_utc 
+        SELECT u.username, m.message, m.timestamp_utc
         FROM messages m
         JOIN users u ON m.sender_id = u.id
-        WHERE (m.sender_id = ? AND m.recipient_id = ?) 
+        WHERE (m.sender_id = ? AND m.recipient_id = ?)
         OR (m.sender_id = ? AND m.recipient_id = ?)
         ORDER BY m.timestamp_utc
     ''', (current_user.id, recipient_id, recipient_id, current_user.id))
@@ -338,15 +335,15 @@ def send_message(recipient_id, message):
 def clear_chat(recipient_id):
     conn = sqlite3.connect('chat.db')
     cursor = conn.cursor()
-    
+
     cursor.execute('''
         DELETE FROM messages
         WHERE (sender_id = ? AND recipient_id = ?) OR (sender_id = ? AND recipient_id = ?)
     ''', (current_user.id, recipient_id, recipient_id, current_user.id))
-    
+
     conn.commit()
     conn.close()
-    
+
     return jsonify({'status': 'success'})
 
 
@@ -368,7 +365,7 @@ def get_users():
         return jsonify({"error": str(e)}), 500
 
 
-    
+
 @app.template_filter('get_username')
 def get_username_filter(user_id):
     conn = sqlite3.connect('chat.db')
@@ -378,7 +375,25 @@ def get_username_filter(user_id):
     conn.close()
     return username[0] if username else "Unknown"
 #$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$online status$$$$$$$$$$$$$$$$$$$$$$
+online_users = set()  # Set to store online user IDs
 
+@socketio.on('connect')
+def handle_connect():
+    user_id = session.get("user_id")  # Assuming user_id is stored in session
+    if user_id:
+        online_users.add(user_id)
+        emit("user_online", {"user_id": user_id}, broadcast=True)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    user_id = session.get("user_id")
+    if user_id:
+        online_users.discard(user_id)
+        emit("user_offline", {"user_id": user_id}, broadcast=True)
+
+@app.route('/user_status/<int:user_id>')
+def get_user_status(user_id):
+    return jsonify({"online": user_id in online_users})
 #$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
 if __name__ == '__main__':
     init_db()
