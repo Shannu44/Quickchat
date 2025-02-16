@@ -604,7 +604,37 @@ socket.on("user_offline", (data) => {
         updateStatusElement(data.user_id, false);
     }
 });
-////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////Auto Refresh
+
+function loadChatMessages(recipientId) {
+    $.ajax({
+        url: `/get_messages/${recipientId}`, // ✅ Fixed incorrect template string syntax
+        type: 'GET',
+        dataType: 'json',
+        success: function(messages) {
+            const conversationArea = $('#conversation-area');
+            conversationArea.empty(); // ✅ Clear previous messages before appending
+
+            messages.forEach(msg => {
+                const isSender = msg.sender === CURRENT_USER; // ✅ Use correct JSON property
+                addMessageToConversation(msg.sender, msg.text, isSender, msg.timestamp); // ✅ Use correct field names
+            });
+
+            conversationArea.scrollTop(conversationArea.prop("scrollHeight")); // ✅ Auto-scroll to latest message
+        },
+        error: function(xhr, status, error) {
+            console.error("Error fetching messages:", error);
+        }
+    });
+}
+
+// Automatically fetch messages every 3 seconds
+setInterval(() => {
+    const recipientId = $('#recipient-id').val().trim(); // ✅ Ensure recipientId is valid
+    if (recipientId) {
+        loadChatMessages(recipientId);
+    }
+}, 3000);
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

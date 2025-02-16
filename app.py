@@ -85,8 +85,10 @@ def load_user(user_id):
         return User(user_data[0], user_data[1], user_data[2], user_data[3])
     return None
 
-@app.route('/register', methods=['POST'])
+@app.route('/register', methods=['GET','POST'])
 def register():
+    if request.method == 'GET':
+        return render_template('register.html') 
     username = request.form['username']
     password = request.form['password']
     conn = sqlite3.connect('chat.db')
@@ -95,7 +97,7 @@ def register():
         cursor.execute('INSERT INTO users (username, password, is_admin) VALUES (?, ?, ?)', (username, password, 0))
         conn.commit()
     except sqlite3.IntegrityError:
-        return "Username already exists.", 400
+        return "Username already exists.Try another one..", 400
     finally:
         conn.close()
     return redirect(url_for('login'))
@@ -375,7 +377,7 @@ def get_username_filter(user_id):
     conn.close()
     return username[0] if username else "Unknown"
 #$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$online status$$$$$$$$$$$$$$$$$$$$$$
-online_users = set()  # Set to store online user IDs
+online_users = set()  
 
 @socketio.on('connect')
 def handle_connect():
