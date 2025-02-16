@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.js"></script>
     <script src="{{ url_for('static', filename='script.js') }}" defer></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
 </head>
 <body>
     <div class="app">
@@ -21,13 +22,13 @@
             <h3>Recent Chats</h3>
             <input type="text" id="recent-user-search" placeholder="Search users..." oninput="searchRecentUsers()" />
             <ul id="recent-chats">
-                
+               
             </ul>
         </div>
         <div class="chat-area">
             <div class="chat-header">
                 <h2 id="chat-with">Select a user to chat</h2>
-                <p id="user-online-status">status.</p>
+                <p id="user-online-status"></p>
                 <div class="chat-menu">
                 <button class="menu-toggle" id="three-dots">⋮</button>
                     <div class="menu-dropdown" id="menuDropdown">
@@ -117,24 +118,155 @@ function formatTimestamp(utcString) {
 }
 
 
-function addMessageToConversation(username, message, isSender, timestamp) {
+
+let lastDate = '';
+
+function addMessageToConversation(username, message, isSender, timestamp, status = "sent") {
     const conversationArea = document.getElementById('conversation-area');
     const msgDiv = document.createElement('div');
     msgDiv.className = isSender ? 'msg sender' : 'msg receiver';
-    
-    const formattedTimestamp = formatTimestamp(timestamp);
+    const messageDate = new Date(timestamp).toDateString(); // Get only the date part
+
+    // Add date separator if it's a new day
+    if (messageDate !== lastDate) {
+        lastDate = messageDate;
+        const dateDiv = document.createElement("div");
+        dateDiv.className = "msg-date";
+        dateDiv.textContent = messageDate;
+        conversationArea.appendChild(dateDiv);
+    }
+    // Format the time for the message
+    const formattedTimestamp = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+       // Default tick icon
+    let tickIcon = "";
+    if (isSender) {
+        tickIcon = `<i class="fa-solid fa-check-double double-tick ${status === "read" ? "read-tick" : ""}"></i>`;
+    }
+
+
     msgDiv.innerHTML = `
         <div class="msg-detail">
             <div class="msg-content">
                 <span class="msg-message">${message}</span>
-                <span class="msg-time">${formattedTimestamp}</span>
+                <span class="msg-time">${formattedTimestamp} ${tickIcon}</span>
             </div>
         </div>
     `;
-    
+
     conversationArea.appendChild(msgDiv);
-    conversationArea.scrollTop = conversationArea.scrollHeight; // Scroll to the bottom
+    conversationArea.scrollTop = conversationArea.scrollHeight; // Auto scroll to the bottom
 }
+
+
+// ✅ Listen for status updates
+socket.on("status_updated", (data) => {
+    updateMessageStatus(data.index, data.status);
+});
+//////////////////////////////////////////////////////////////////////////////////////////////TICK UPDATE/////////////////////////////////
+// ✅ Update message status dynamically
+function updateMessageStatus(messageIndex, newStatus) {
+    const messageElements = document.querySelectorAll(".msg.sender .msg-time");
+    
+    if (messageElements[messageIndex]) {
+        let tickIcon = messageElements[messageIndex].querySelector("i.fa-check-double");
+
+        if (!tickIcon) {
+            tickIcon = document.createElement("i");
+            tickIcon.classList.add("fa-solid", "fa-check-double", "double-tick");
+            messageElements[messageIndex].appendChild(tickIcon);
+        }
+
+        if (newStatus === "read") {
+            tickIcon.classList.add("read-tick");
+            tickIcon.dataset.read = "true"; 
+
+            // Store status in localStorage
+            let messageStatus = JSON.parse(localStorage.getItem("messageStatus")) || {};
+            messageStatus[messageIndex] = "read";
+            localStorage.setItem("messageStatus", JSON.stringify(messageStatus));
+        }
+    }
+}
+
+// ✅ Mark messages as read when recipient comes online
+socket.on("user_online", () => {
+    markMessagesAsRead();
+});
+
+// ✅ Function to mark messages as read
+function markMessagesAsRead() {
+    const allSentMessages = document.querySelectorAll(".msg.sender .msg-time");
+
+    allSentMessages.forEach((msgTime, index) => {
+        let tickIcon = msgTime.querySelector("i.fa-check-double");
+
+        if (!tickIcon) {
+            tickIcon = document.createElement("i");
+            tickIcon.classList.add("fa-solid", "fa-check-double", "double-tick");
+            msgTime.appendChild(tickIcon);
+        }
+
+        tickIcon.classList.add("read-tick"); // Set green tick
+        tickIcon.dataset.read = "true"; // Prevent future changes
+
+        // ✅ Notify the server to update the status
+        socket.emit("update_status", { index, status: "read" });
+
+        // ✅ Store status in localStorage
+        let messageStatus = JSON.parse(localStorage.getItem("messageStatus")) || {};
+        messageStatus[index] = "read";
+        localStorage.setItem("messageStatus", JSON.stringify(messageStatus));
+    });
+}
+
+// ✅ Restore message status on page reload
+function restoreMessageStatus() {
+    let messageStatus = JSON.parse(localStorage.getItem("messageStatus")) || {};
+    const messageElements = document.querySelectorAll(".msg.sender .msg-time");
+
+    messageElements.forEach((msgTime, index) => {
+        if (messageStatus[index] === "read") {
+            let tickIcon = msgTime.querySelector("i.fa-check-double");
+
+            if (!tickIcon) {
+                tickIcon = document.createElement("i");
+                tickIcon.classList.add("fa-solid", "fa-check-double", "double-tick");
+                msgTime.appendChild(tickIcon);
+            }
+
+            tickIcon.classList.add("read-tick"); // Keep it green
+        }
+    });
+}
+
+// Run this function on page load
+document.addEventListener("DOMContentLoaded", restoreMessageStatus);
+////////////////////////////////RESTORE MSG TICK////////////////
+function restoreMessageStatus() {
+    let messageStatus = JSON.parse(localStorage.getItem("messageStatus")) || {};
+
+    const messageElements = document.querySelectorAll('.msg.sender .msg-time');
+
+    messageElements.forEach((msgTime, index) => {
+        if (messageStatus[index] === "read") {
+            let tickIcon = msgTime.querySelector("i.fa-check-double");
+
+            if (!tickIcon) {
+                tickIcon = document.createElement("i");
+                tickIcon.classList.add("fa-solid", "fa-check-double", "double-tick");
+                msgTime.appendChild(tickIcon);
+            }
+
+            tickIcon.classList.add("read-tick"); // Set it to green permanently
+        }
+    });
+}
+
+// Run this function on page load
+document.addEventListener("DOMContentLoaded", restoreMessageStatus);
+
+/////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 socket.on('receive_message', (data) => {
@@ -290,10 +422,10 @@ function startChat(recipientId, username) {
 function updateStatusElement(userId, isOnline) {
     const statusElement = document.getElementById('user-online-status');
     if (isOnline) {
-        statusElement.innerText = "🟢 Online";
+        statusElement.innerText = " online";
         statusElement.style.color = "green";
     } else {
-        statusElement.innerText = "🔴 Offline";
+        statusElement.innerText = " offline";
         statusElement.style.color = "red";
     }
 }
@@ -472,6 +604,8 @@ socket.on("user_offline", (data) => {
         updateStatusElement(data.user_id, false);
     }
 });
+////////////////////////////////////////////////////////////////////////
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     </script>

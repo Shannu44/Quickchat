@@ -383,6 +383,7 @@ def handle_connect():
     if user_id:
         online_users.add(user_id)
         emit("user_online", {"user_id": user_id}, broadcast=True)
+        print("A user connected")
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -390,11 +391,29 @@ def handle_disconnect():
     if user_id:
         online_users.discard(user_id)
         emit("user_offline", {"user_id": user_id}, broadcast=True)
+        print("A user disconnected")
 
 @app.route('/user_status/<int:user_id>')
 def get_user_status(user_id):
     return jsonify({"online": user_id in online_users})
+
+
+
 #$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+
+@socketio.on("message")
+def handle_message(data):
+    print("Received message:", data)
+    send(data, broadcast=True)  # Broadcast message to all clients
+
+@socketio.on("update_status")
+def update_status(data):
+    """Update message status dynamically"""
+    print(f"Updating message {data['index']} to {data['status']}")
+    emit("status_updated", data, broadcast=True)
+
+#900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+
 if __name__ == '__main__':
     init_db()
     socketio.run(app, debug=True)
