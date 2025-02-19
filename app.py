@@ -4,6 +4,9 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from datetime import datetime
 from datetime import timedelta
 from flask import Flask, request, jsonify, session
+from flask import send_file
+import io
+import base64
 import pytz
 import sqlite3
 
@@ -13,7 +16,7 @@ socketio = SocketIO(app)
 
 # Flask-Login setup
 login_manager = LoginManager()
-login_manager.init_app(app)
+login_manager.init_app(app) 
 login_manager.login_view = 'login'
 
 def init_db():
@@ -21,13 +24,13 @@ def init_db():
     cursor = conn.cursor()
     current_time = datetime.utcnow().isoformat()  # Save in UTC ISO 8601 format
 
-
         # Users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL
+            password TEXT NOT NULL,
+            profile_picture BLOB
         )
     ''')
 
@@ -68,21 +71,21 @@ def init_db():
         cursor.execute("ALTER TABLE messages ADD COLUMN timestamp_utc TEXT")
 
 class User(UserMixin):
-    def __init__(self, id, username, password, is_admin):
+    def __init__(self, id, username, password):
         self.id = id
         self.username = username
         self.password = password
-        self.is_admin = is_admin
 
 @login_manager.user_loader
 def load_user(user_id):
     conn = sqlite3.connect('chat.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT id, username, password, is_admin FROM users WHERE id = ?', (user_id,))
+    cursor.execute('SELECT id, username, password FROM users WHERE id = ?', (user_id,))
     user_data = cursor.fetchone()
+    conn.commit()
     conn.close()
     if user_data:
-        return User(user_data[0], user_data[1], user_data[2], user_data[3])
+        return User(user_data[0], user_data[1], user_data[2])
     return None
 
 @app.route('/register', methods=['GET','POST'])
@@ -91,16 +94,26 @@ def register():
         return render_template('register.html') 
     username = request.form['username']
     password = request.form['password']
+    profile_picture=request.files['profile_picture']
+
+        # Convert file to bytes
+    if profile_picture:
+        profile_picture_data = profile_picture.read()  # Read image as bytes
+    else:
+        profile_picture_data = None  # Handle case where no file is uploaded
+
     conn = sqlite3.connect('chat.db')
     cursor = conn.cursor()
     try:
-        cursor.execute('INSERT INTO users (username, password, is_admin) VALUES (?, ?, ?)', (username, password, 0))
+        cursor.execute('INSERT INTO users (username, password, profile_picture) VALUES (?, ?, ?)', (username, password, profile_picture_data))
         conn.commit()
     except sqlite3.IntegrityError:
         return "Username already exists.Try another one..", 400
     finally:
         conn.close()
     return redirect(url_for('login'))
+
+#hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh  
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -113,7 +126,7 @@ def login():
         user = cursor.fetchone()
         conn.close()
         if user and user[2] == password:  # Direct comparison for plaintext passwords
-            login_user(User(user[0], user[1], user[2], user[3]))
+            login_user(User(user[0], user[1], user[2]))
             session.permanent = True  # ✅ session persistent
             session['user_id'] = user[0]  # ✅ Store user_id in session
             print(f"User {user[0]} logged in")  # Debugging purpose
@@ -266,13 +279,17 @@ def handle_chat_cleared(data):
     emit('chat_cleared', data, room=data['recipient_id'])
     emit('chat_cleared', data, room=data['sender_id'])
 
+
+
 @socketio.on('send_message')
 def handle_send_message(data):
+    print("send message socket::::")
     conn = sqlite3.connect('chat.db')
     cursor = conn.cursor()
 
     timestamp = data.get('timestamp', datetime.utcnow().isoformat())
 
+    # Save the message to the database
     cursor.execute(
         '''INSERT INTO messages (sender_id, recipient_id, message, timestamp_utc)
            VALUES (?, ?, ?, ?)''',
@@ -282,9 +299,13 @@ def handle_send_message(data):
     conn.commit()
     conn.close()
 
-    # Emit to both sender and recipient
+    timestamp = datetime.utcnow().isoformat()
+
+    # Emit to recipient's room
     emit('receive_message', {**data, 'sender_username': current_user.username}, room=data['recipient_id'])
+    # Emit to sender's room for echo
     emit('receive_message', {**data, 'sender_username': current_user.username}, room=data['sender_id'])
+
 
 @app.route('/get_messages/<int:recipient_id>', methods=['GET'])
 @login_required
@@ -301,6 +322,7 @@ def get_messages(recipient_id):
     ''', (current_user.id, recipient_id, recipient_id, current_user.id))
     messages = cursor.fetchall()
     conn.close()
+    print("Retrieved messages:", messages)
 
     formatted_messages = [(msg[0], msg[1], msg[2]) for msg in messages]
     return jsonify(formatted_messages)
@@ -309,23 +331,26 @@ def get_messages(recipient_id):
 def send_message(recipient_id, message):
     conn = sqlite3.connect('chat.db')
     cursor = conn.cursor()
-    current_time = datetime.utcnow().isoformat()
+    timestamp_utc = datetime.utcnow().isoformat()  
+    try:
+        # Insert message into messages table
+        cursor.execute('''
+            INSERT INTO messages (sender_id, recipient_id, message, timestamp_utc)
+            VALUES (?, ?, ?, ?)
+        ''', (current_user.id, recipient_id, message, timestamp_utc))
 
-    # Insert message into messages table
-    cursor.execute('''
-        INSERT INTO messages (sender_id, recipient_id, message, timestamp_utc)
-        VALUES (?, ?, ?, ?)
-    ''', (current_user.id, recipient_id, message, current_time))
+        # Insert into recent_chats, avoiding duplicates
+        cursor.execute('''
+            INSERT INTO recent_chats (sender_id, user_id, timestamp_local)
+            VALUES (?, ?, ?)
+        ''', (current_user.id, recipient_id, timestamp_utc))
 
-    # Insert into recent_chats, avoiding duplicates
-    cursor.execute('''
-        INSERT INTO recent_chats (sender_id, user_id, timestamp_local)
-        VALUES (?, ?, ?)
-        ON CONFLICT(sender_id, user_id) DO UPDATE SET timestamp_local = excluded.timestamp_local
-    ''', (current_user.id, recipient_id, current_time))
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Database Error: {e}")  # Debugging log
+    finally:
+        conn.close()
 
-    conn.commit()
-    conn.close()
 
 
 #$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ CLEAR CHAT $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
@@ -385,6 +410,9 @@ def handle_connect():
     if user_id:
         online_users.add(user_id)
         emit("user_online", {"user_id": user_id}, broadcast=True)
+        user_id = current_user.id  # This can be the user's unique ID
+        join_room(user_id)
+        print(f"User {user_id} joined room {user_id}")
         print("A user connected")
 
 @socketio.on('disconnect')
@@ -414,7 +442,65 @@ def update_status(data):
     print(f"Updating message {data['index']} to {data['status']}")
     emit("status_updated", data, broadcast=True)
 
-#900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+#900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 PROFILE PIC
+@app.route('/upload_profile_picture', methods=['POST'])
+def upload_profile_picture():
+    if 'profile_picture' not in request.files:
+        flash('No file selected')
+        return redirect(url_for('index'))
+
+    file = request.files['profile_picture']
+    
+    if file.filename == '':
+        flash('No selected file')
+        return redirect(url_for('index'))
+
+    if file and allowed_file(file.filename):
+        profile_picture_data = file.read()
+        user_id = session.get('user_id')  # Assuming user authentication is handled
+
+        if user_id:
+            conn = sqlite3.connect('chat.db')
+            c = conn.cursor()
+            c.execute("UPDATE users SET profile_picture = ? WHERE id = ?", (profile_picture_data, user_id))
+            conn.commit()
+            conn.close()
+
+            flash('Profile picture updated successfully')
+            return redirect(url_for('index'))
+        else:
+            flash('User not logged in')
+            return redirect(url_for('index'))
+    else:
+        flash('Invalid file format. Only images allowed.')
+        return redirect(url_for('index'))
+    
+@app.route('/profile_picture/<int:user_id>')
+def get_profile_picture(user_id):
+    conn = sqlite3.connect('chat.db')
+    c = conn.cursor()
+    c.execute("SELECT profile_picture FROM users WHERE id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+
+    if row and row[0]:
+        return send_file(io.BytesIO(row[0]), mimetype='img/jpeg/jpg/png')  # Assuming images are stored as JPEG
+    else:
+        return send_file('D:/Github/Projects/Msg/static/default_profile.jpg', mimetype='img/jpeg/jpg/png')  
+
+#----------------------------------------------------------------------------------
+
+# Function to check allowed file types
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'png', 'jpg', 'jpeg', 'gif', 'mp4', 'mov', 'avi'}
+
+# Function to determine media type
+def get_media_type(filename):
+    ext = filename.rsplit('.', 1)[1].lower()
+    return 'image' if ext in {'png', 'jpg', 'jpeg', 'gif'} else 'video'
+#------------------------------------------------------------------------------------Profile pic of users---
+
+
 
 if __name__ == '__main__':
     init_db()
