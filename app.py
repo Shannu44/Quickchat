@@ -207,6 +207,14 @@ def admin_logout():
     return redirect(url_for('login'))
 
 
+# Route to render profile page
+@app.route("/profile")
+def profile():
+    if "user_id" not in session:
+        return redirect(url_for("login"))  # Redirect if not logged in
+
+    return render_template("profile.html", current_user={"id": session["user_id"]})
+
 @app.route('/logout')
 @login_required
 def logout():
@@ -258,7 +266,7 @@ def get_recent_chats():
     cursor = conn.cursor()
 
     cursor.execute('''
-        SELECT u.id, u.username, MAX(m.timestamp_utc) as last_message_time
+        SELECT u.id, u.username, u.profile_picture, MAX(m.timestamp_utc) as last_message_time
         FROM messages m
         JOIN users u ON (m.sender_id = u.id OR m.recipient_id = u.id)
         WHERE (m.sender_id = ? OR m.recipient_id = ?)
@@ -270,7 +278,26 @@ def get_recent_chats():
     recent_chats = cursor.fetchall()
     conn.close()
 
-    return jsonify(recent_chats)
+    # Convert profile pictures to URLs
+    recent_chats_with_pictures = []
+    for chat in recent_chats:
+        user_id, username, profile_picture, last_message_time = chat
+
+        # If profile_picture exists, generate a URL; otherwise, use a default image
+        if profile_picture:
+            profile_picture_url = url_for('get_profile_picture', user_id=user_id)
+        else:
+            profile_picture_url = url_for('static', filename='default_profile.jpg')
+
+        recent_chats_with_pictures.append({
+            "user_id": user_id,
+            "username": username,
+            "profile_picture": profile_picture_url,
+            "last_message_time": last_message_time
+        })
+
+    return jsonify(recent_chats_with_pictures)
+
 
 
 @socketio.on('chat_cleared')
@@ -302,9 +329,9 @@ def handle_send_message(data):
     timestamp = datetime.utcnow().isoformat()
 
     # Emit to recipient's room
-    emit('receive_message', {**data, 'sender_username': current_user.username}, room=data['recipient_id'])
+    emit('receive_message', {**data, 'sender_username': current_user.username,'status': 'sent'}, room=data['recipient_id'])
     # Emit to sender's room for echo
-    emit('receive_message', {**data, 'sender_username': current_user.username}, room=data['sender_id'])
+    emit('receive_message', {**data, 'sender_username': current_user.username,'status': 'sent'}, room=data['sender_id'])
 
 
 @app.route('/get_messages/<int:recipient_id>', methods=['GET'])
@@ -393,6 +420,30 @@ def get_users():
 
 
 
+@app.route('/api/get_current_user')
+def get_current_user():
+    if "user_id" not in session:
+        return jsonify({"error": "User not logged in"}), 401  # Unauthorized access
+
+    try:
+        conn = sqlite3.connect('chat.db')
+        cursor = conn.cursor()
+
+        # Fetch the current user's username based on session user_id
+        cursor.execute('SELECT username FROM users WHERE id = ?', (session["user_id"],))
+        user = cursor.fetchone()
+        conn.close()
+
+        if user:
+            return jsonify({"username": user[0]})  # Return only the logged-in user's username
+        else:
+            return jsonify({"error": "User not found"}), 404
+
+    except Exception as e:
+        print(f"ERROR in get_current_user: {e}")  # Log error
+        return jsonify({"error": str(e)}), 500
+
+
 @app.template_filter('get_username')
 def get_username_filter(user_id):
     conn = sqlite3.connect('chat.db')
@@ -440,8 +491,8 @@ def handle_message(data):
 def update_status(data):
     """Update message status dynamically"""
     print(f"Updating message {data['index']} to {data['status']}")
-    emit("status_updated", data, broadcast=True)
-
+    emit("status_updated", data, broadcast=True)  
+    
 #900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 PROFILE PIC
 @app.route('/upload_profile_picture', methods=['POST'])
 def upload_profile_picture():
@@ -487,8 +538,85 @@ def get_profile_picture(user_id):
         return send_file(io.BytesIO(row[0]), mimetype='img/jpeg/jpg/png')  # Assuming images are stored as JPEG
     else:
         return send_file('D:/Github/Projects/Msg/static/default_profile.jpg', mimetype='img/jpeg/jpg/png')  
+    
 
-#----------------------------------------------------------------------------------
+#------------------------------------UPDATE PROFILE PIC------------------------------------------------
+
+# Route to upload/change profile picture
+@app.route("/update-profile-picture", methods=["POST"])
+def update_profile_picture():
+    if "user_id" not in session:
+        return jsonify({"success": False, "message": "User not logged in"}), 401
+
+    user_id = session["user_id"]
+    
+    if "profile_pic" not in request.files:
+        return jsonify({"success": False, "message": "No file uploaded"})
+
+    file = request.files["profile_pic"]
+    if file.filename == "":
+        return jsonify({"success": False, "message": "No selected file"})
+
+    image_data = file.read()  # Read image as binary
+
+    try:
+        conn = sqlite3.connect('chat.db')
+        cursor = conn.cursor()
+        
+        # Update profile picture in the database
+        cursor.execute("UPDATE users SET profile_picture = ? WHERE id = ?", (image_data, user_id))
+        
+        conn.commit()  # Save changes
+        conn.close()
+        
+        return jsonify({"success": True, "message": "Profile picture updated successfully!"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
+
+#----------------------------------------------------------------------------------USERNAME
+@app.route("/update-username", methods=["POST"])
+def update_username():
+    if "user_id" not in session:
+        return jsonify({"success": False, "message": "User not logged in"}), 401
+
+    user_id = session["user_id"]
+    data = request.get_json()  # Get JSON data
+    new_username = data.get("new_username", "").strip()
+
+    if not new_username:
+        return jsonify({"success": False, "message": "Username cannot be empty"}), 400
+
+    try:
+        conn = sqlite3.connect('chat.db')
+        cursor = conn.cursor()
+
+        # Check if username already exists
+        cursor.execute("SELECT id FROM users WHERE username = ?", (new_username,))
+        existing_user = cursor.fetchone()
+        if existing_user:
+            return jsonify({"success": False, "message": "Username already taken"}), 409
+
+        # Update username
+        cursor.execute("UPDATE users SET username = ? WHERE id = ?", (new_username, user_id))
+        conn.commit()
+
+        # Update session username (important!)
+        session["username"] = new_username
+
+        return jsonify({"success": True, "message": "Username updated successfully!"})
+
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+#----------------------------------------------
 
 # Function to check allowed file types
 def allowed_file(filename):
@@ -498,10 +626,31 @@ def allowed_file(filename):
 def get_media_type(filename):
     ext = filename.rsplit('.', 1)[1].lower()
     return 'image' if ext in {'png', 'jpg', 'jpeg', 'gif'} else 'video'
-#------------------------------------------------------------------------------------Profile pic of users---
+#------------------------------------------------------------------------------------Delete MSG--
 
+@app.route('/delete_messages', methods=['POST'])
+def delete_messages():
+    data = request.json
+    message_ids = data.get('message_ids')
 
+    if not message_ids or not isinstance(message_ids, list):
+        return jsonify({'error': 'Invalid message IDs'}), 400
 
+    try:
+        conn = sqlite3.connect("chat.db")
+        cursor = conn.cursor()
+
+        # Delete selected messages
+        query = "DELETE FROM messages WHERE id IN ({seq})".format(seq=','.join(['?']*len(message_ids)))
+        cursor.execute(query, message_ids)
+        conn.commit()
+        conn.close()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
 if __name__ == '__main__':
     init_db()
     socketio.run(app, debug=True)
+

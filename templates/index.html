@@ -13,7 +13,9 @@
 <body>
 <div class="app">
     <div class="header">
-        <div class="logo">+</div>
+        <div class="logo">+
+            <a href="/"><img src="/static/KwikChat_logo.png" alt="KwikChat_logo"></a>
+        </div>
         <div class="user-settings">
         <div class="dark-light">
             <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
@@ -29,7 +31,7 @@
             </div>
         </div>
         
-        <img class="user-profile" src="https://s3-us-west-2.amazonaws.com/s.cdpn.io/3364143/download+%281%29.png" alt="" class="account-profile" alt="">
+        <a href="/profile"><img class="user-profile" src="{{ url_for('get_profile_picture', user_id=current_user.id) }}"></a>
         </div>
     </div>
 <div class="wrapper">
@@ -41,7 +43,7 @@
                 <ul id="recent-chats">
                     {% for chat in recent_chats %}
                         <li onclick="startChat('{{ chat[0] }}', '{{ chat[1] }}')">
-                            <img src="{{ url_for('get_profile_picture', user_id=currentRecipientId) }}" alt="Profile Picture" class="profile-pic">
+                            <img src="{{ url_for('get_profile_picture', user_id=last_chat_user_id) if last_chat_user_id else url_for('static', filename='default_profile.jpg') }}" alt="Profile Picture" class="profile-pic">
                             {{ chat[1] }}
                         </li>
                     {% endfor %}
@@ -71,14 +73,19 @@
 <div class="chatdiv">
 <div class="chat-area">
     <div class="chat-header">
+        <div class="chat-profile">
+        <img id="chat-profile-pic" src="/static/default_profile.jpg" alt="Profile Picture" class="profile-pic">
         <h2 id="chat-with">Select a user to chat</h2>
-        <p id="user-online-status"></p>
+        </div>
+        <div class="online-menu">
+        <p id="user-online-status"></p> 
         <div class="chat-menu">
         <button class="menu-toggle" id="three-dots">⋮</button>
             <div class="menu-dropdown" id="menuDropdown">
                 <a id="clear-chat-button" onclick="clearChat()">Clear Chat</a>
                 </div>
         </div> 
+        </div>
     </div>   
     <div class="conversation-area" id="conversation-area">
         <div class="chatArea">
@@ -98,7 +105,8 @@
 <div class="detail-area">
 <div class="detail-area-header">
 <div class="profile-area" id="profile-area">
-        <h3>User Profile</h3>
+    <h3>User Profile</h3>
+    <img id="chat-profile-picture" src="/static/default_profile.jpg" alt="Profile Picture" class="chat-profile-picture">
         <p id="profile-details">Select a user to see profile details.</p>
     </div>
 </div>
@@ -112,11 +120,6 @@
       <div class="color green" data-color="green"></div>
       <div class="color orange" data-color="orange"></div>
      </div>
-    </div>
-    <div class="detail-change">
-     Change Emoji
-     <svg xmlns="http://www.w3.org/2000/svg" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-thumbs-up">
-      <path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3" /></svg>
     </div>
 </div>
 </div>
@@ -186,10 +189,16 @@ function addMessageToConversation(sender, message, isSender, timestamp, status =
         conversationArea.appendChild(dateDiv);
     }
 
-        // Default tick icon
+       // Determine tick icon based on status
     let tickIcon = "";
     if (isSender) {
-        tickIcon = `<i class="fa-solid fa-check-double double-tick ${status === "read" ? "read-tick" : ""}"></i>`;
+        if (status === "read") {
+            tickIcon = `<i class="fa-solid fa-check-double double-tick read-tick"></i>`;
+        } else if (status === "delivered") {
+            tickIcon = `<i class="fa-solid fa-check-double double-tick delivered-tick"></i>`;
+        } else {
+            tickIcon = `<i class="fa-solid fa-check-double double-tick"></i>`;
+        }
     }
 
     msgDiv.innerHTML = `
@@ -197,10 +206,10 @@ function addMessageToConversation(sender, message, isSender, timestamp, status =
             <div class="msg-content">
                 <span class="msg-message">${message}</span>
                 <span class="msg-time">${formattedTimestamp}</span>
+                ${isSender ? tickIcon : ''}
             </div>
         </div>
     `;
-
     conversationArea.appendChild(msgDiv);
     // Ensure scrolling happens after the new message is added
     setTimeout(() => {
@@ -208,87 +217,53 @@ function addMessageToConversation(sender, message, isSender, timestamp, status =
     }, 100);
 }
 
-// ✅ Listen for status updates
+
 socket.on("status_updated", (data) => {
-    console.log("staus checking done")
     updateMessageStatus(data.index, data.status);
 });
+
 ///////////////////////////////////////////////////////////////////////
 function updateMessageStatus(messageIndex, newStatus) {
-    const messageElements = document.querySelectorAll(".msg.sender .msg-time");
-    
+    const messageElements = document.querySelectorAll(".msg.sender"); // Select all sender messages
+
     if (messageElements[messageIndex]) {
-        let tickIcon = messageElements[messageIndex].querySelector("i.fa-check-double");
+        const tickIcon = messageElements[messageIndex].querySelector("i.fa-check-double");
 
-        if (!tickIcon) {
-            tickIcon = document.createElement("i");
-            tickIcon.classList.add("fa-solid", "fa-check-double", "double-tick");
-            messageElements[messageIndex].appendChild(tickIcon);
-        }
-
-        if (newStatus === "read") {
-            tickIcon.classList.add("read-tick");
-            tickIcon.dataset.read = "true"; 
-
-            // Store status in localStorage
-            let messageStatus = JSON.parse(localStorage.getItem("messageStatus")) || {};
-            messageStatus[messageIndex] = "read";
-            localStorage.setItem("messageStatus", JSON.stringify(messageStatus));
+        if (newStatus === "delivered") {
+            tickIcon.classList.remove("read-tick"); // Remove read tick if present
+            tickIcon.classList.add("delivered-tick"); // Add delivered tick style
+        } else if (newStatus === "read") {
+            tickIcon.classList.add("read-tick"); // Add read tick style
+            tickIcon.classList.remove("delivered-tick"); // Remove delivered tick if present
         }
     }
 }
-
-// ✅ Mark messages as read when recipient comes online
-socket.on("user_online", () => {
-    markMessagesAsRead();
+socket.on("user_online", (data) => {
+    // Check if the user is the current recipient
+    if (data.user_id === currentRecipientId) {
+        markMessagesAsRead(); // Call to mark messages as read
+    }
 });
+
 // ✅ Function to mark messages as read
 function markMessagesAsRead() {
     const allSentMessages = document.querySelectorAll(".msg.sender .msg-time");
 
     allSentMessages.forEach((msgTime, index) => {
-        let tickIcon = msgTime.querySelector("i.fa-check-double");
+        const msgDiv = msgTime.closest('.msg.sender'); // Get the message div
+        let tickIcon = msgDiv.querySelector("i.fa-check-double");
 
-        if (!tickIcon) {
-            tickIcon = document.createElement("i");
-            tickIcon.classList.add("fa-solid", "fa-check-double", "double-tick");
-            msgTime.appendChild(tickIcon);
-        }
+        if (tickIcon && !tickIcon.classList.contains("read-tick")) { // Check if tick is not already read
+            tickIcon.classList.add("read-tick"); // Set the read tick
+            tickIcon.classList.remove("delivered-tick"); // Ensure delivered tick is removed
 
-        tickIcon.classList.add("read-tick"); // Set green tick
-        tickIcon.dataset.read = "true"; // Prevent future changes
-
-        // ✅ Notify the server to update the status
-        socket.emit("update_status", { index, status: "read" });
-
-        // ✅ Store status in localStorage
-        let messageStatus = JSON.parse(localStorage.getItem("messageStatus")) || {};
-        messageStatus[index] = "read";
-        localStorage.setItem("messageStatus", JSON.stringify(messageStatus));
-    });
-}
-// ✅ Restore message status on page reload
-function restoreMessageStatus() {
-    let messageStatus = JSON.parse(localStorage.getItem("messageStatus")) || {};
-    const messageElements = document.querySelectorAll(".msg.sender .msg-time");
-
-    messageElements.forEach((msgTime, index) => {
-        if (messageStatus[index] === "read") {
-            let tickIcon = msgTime.querySelector("i.fa-check-double");
-
-            if (!tickIcon) {
-                tickIcon = document.createElement("i");
-                tickIcon.classList.add("fa-solid", "fa-check-double", "double-tick");
-                msgTime.appendChild(tickIcon);
-            }
-
-            tickIcon.classList.add("read-tick"); // Keep it green
+            // Notify the server to update the status
+            socket.emit("update_status", { index, status: "read" });
         }
     });
 }
 
-// Run this function on page load
-document.addEventListener("DOMContentLoaded", restoreMessageStatus);
+
 ////////////////////////////////RESTORE MSG TICK////////////////
 socket.on('receive_message', (data) => {
     if (data.recipient_id === currentUserId) {
@@ -415,12 +390,24 @@ document.querySelectorAll('.recent-chat').forEach(item => {
 });
 //////////////////////////////////////////////////////////////////////////////////////
 function startChat(recipientId, username) {
-        currentRecipientId = recipientId;
-        document.getElementById('chat-with').innerText = `${username}`;
-        document.getElementById('profile-details').innerText = `Profile details for ${username}`;
-        fetchMessages(recipientId);
+    currentRecipientId = recipientId;
 
-        // Fetch the recipient's online status
+    // Update the chat header with the username
+    document.getElementById('chat-with').innerText = username;
+    document.getElementById('profile-details').innerText = `${username}`;
+
+    // Set profile picture source dynamically
+    const profilePicDetail = document.getElementById('chat-profile-picture');
+    const profilePicElement = document.getElementById('chat-profile-pic');
+    profilePicElement.src = `/profile_picture/${recipientId}`;
+    profilePicElement.style.display = 'block';  // Ensure it is visible
+    profilePicDetail.src = `/profile_picture/${recipientId}`;
+    profilePicDetail.style.display = 'block';  // Ensure it is visible
+
+    // Fetch chat messages
+    fetchMessages(recipientId);
+
+    // Fetch the recipient's online status
     fetch(`/user_status/${recipientId}`)
         .then(response => response.json())
         .then(data => {
@@ -428,6 +415,8 @@ function startChat(recipientId, username) {
         })
         .catch(error => console.error('Error fetching user status:', error));
 }
+
+
 
 function updateStatusElement(userId, isOnline) {
     const statusElement = document.getElementById('user-online-status');
@@ -455,44 +444,61 @@ messages.forEach(msg => {
     const isSender = msg[0] === '{{ current_user.username }}'; // Check if the message is from the current user
     addMessageToConversation(msg[0], msg[1], isSender, msg[2]); // msg[2] should be the timestamp
 });
+socket.emit("update_status", { index: messages.length - 1, status: "read" });
 conversationArea.scrollTop = conversationArea.scrollHeight; // Scroll to the bottom
 }
 
     
 async function fetchRecentChats() {
-const response = await fetch('/get_recent_chats');
-const recentChats = await response.json();
-const recentChatsArea = document.getElementById('recent-chats');
-recentChatsArea.innerHTML = ''; // Clear previous recent chats
+    const response = await fetch('/get_recent_chats');
+    const recentChats = await response.json();
+    const recentChatsArea = document.getElementById('recent-chats');
+    recentChatsArea.innerHTML = ''; // Clear previous recent chats
 
-let mostRecentUserId = null;
+    let mostRecentUserId = null;
+    let mostRecentUserProfilePic = null;
 
-recentChats.forEach(([userId, username, lastMessageTime]) => {
-    const chatItem = document.createElement('li');
-    chatItem.innerText = username;
-    chatItem.onclick = () => startChat(userId, username); // Start chat on click
-    recentChatsArea.appendChild(chatItem);
-    
-    // Get the most recent user ID for automatic selection
-    if (!mostRecentUserId) {
-        mostRecentUserId = userId; // Store the first user as most recent
+    recentChats.forEach((chat) => {
+        const { user_id, username, profile_picture, last_message_time } = chat;
+
+        // Create list item for chat
+        const chatItem = document.createElement('li');
+        chatItem.classList.add('chat-item'); // For CSS styling
+        chatItem.onclick = () => startChat(user_id, username); // Start chat on click
+
+        // Create profile picture element
+        const profilePic = document.createElement('img');
+        profilePic.src = profile_picture;
+        profilePic.alt = `${username}'s profile picture`;
+        profilePic.classList.add('profile-pic');
+
+        // Create username text element
+        const usernameText = document.createElement('span');
+        usernameText.innerText = username;
+
+        // Append elements
+        chatItem.appendChild(profilePic);
+        chatItem.appendChild(usernameText);
+        recentChatsArea.appendChild(chatItem);
+
+        // Track the most recent user
+        if (!mostRecentUserId) {
+            mostRecentUserId = user_id; // Store first user as most recent
+        }
+    });
+
+    // Auto-start chat with the most recent user
+    if (mostRecentUserId) {
+        startChat(mostRecentUserId, recentChats[0].username);
     }
-});
+}
 
-// If there is a recent user, auto-start the chat
-if (mostRecentUserId) {
-    startChat(mostRecentUserId, recentChats[0][1]); // Start chat with the most recent user
-}
-}
 window.onload = function() {
-fetchRecentChats();
-}
+    fetchRecentChats();
+};
 
-socket.emit('new_message', {
-senderId: currentUserId,
-recipientId: recipientId,
-message: messageContent
-});
+
+
 ////////////////////////////////////////////////////////////////////
 function updateRecentChats(newChat) {
     const chatList = document.getElementById('recent-chats-list');
@@ -616,7 +622,27 @@ socket.on("user_offline", (data) => {
         updateStatusElement(data.user_id, false);
     }
 });
-////////////////////////////////////////////////////////////////////////Auto Refresh
+////////////////////////////////////////////////////////////////////////
+async function fetchCurrentUser() {
+    try {
+        const response = await fetch('/get_current_user');
+        const data = await response.json();
+
+        if (data.error) {
+            console.error('Error:', data.error);
+            return;
+        }
+
+        // ✅ Update profile UI
+        document.getElementById('current-username').innerText = data.username;
+        document.getElementById('current-profile-picture').src = data.profile_picture;
+    } catch (error) {
+        console.error('Failed to fetch current user:', error);
+    }
+}
+
+// Call this function on page load
+window.onload = fetchCurrentUser;
 
  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
         </script>

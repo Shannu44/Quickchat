@@ -11,10 +11,12 @@ if (!SpeechRecognition) {
 
     const txtMessage = document.getElementById("TxtMessage");
     const startVoiceButton = document.getElementById("startVoice");
+    let isListening = false; // Track the mic state
 
     recognition.onstart = () => {
         console.log("Voice recognition started...");
         txtMessage.placeholder = "Listening...";
+        startVoiceButton.textContent = "Stop Voice"; // Update button text
     };
 
     recognition.onerror = (event) => {
@@ -40,12 +42,20 @@ if (!SpeechRecognition) {
     recognition.onend = () => {
         console.log("Voice recognition stopped.");
         txtMessage.placeholder = "Type a message...";
+        isListening = false;
+        startVoiceButton.textContent = "Start Voice"; // Reset button when recognition stops
     };
 
     startVoiceButton.addEventListener("click", () => {
-        recognition.start();
+        if (isListening) {
+            recognition.stop(); // Stop recognition if already running
+        } else {
+            recognition.start(); // Start recognition
+            isListening = true;
+        }
     });
 }
+
 //////////////////////////////////////////////////////////////////STYLES CSS DARK AND LIGHT MODE//////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -200,4 +210,20 @@ document.getElementById('conversation-search').addEventListener('input', functio
     if (firstMatch) {
         firstMatch.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
+});
+/////////////////////DELETE MSG//////////////////////////
+
+// Listen for the deleted message event
+socket.on('message_deleted', function(data) {
+    const messageElement = document.getElementById(`msg-${data.message_id}`);
+    if (messageElement) {
+        messageElement.remove(); // Remove message from UI
+    }
+});
+
+socket.on('messages_deleted', function(data) {
+    data.message_ids.forEach(id => {
+        let msgElement = document.getElementById(`msg-${id}`);
+        if (msgElement) msgElement.remove();
+    });
 });
